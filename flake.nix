@@ -71,9 +71,11 @@
                 chmod +x .venv/bin/pytest
               fi
 
-              echo "Electrum dev shell ready.  Now run:"
-              echo "    pip install -e ."
-              echo "    pytest tests -v"
+              pip install -e .
+
+              echo "Electrum dev shell ready."
+              echo "  Tests: pytest tests/ [-k <expr>]"
+              echo "  Fuzz:  python tests/fuzz/fuzz_<harness>.py <corpus>"
             '';
           };
         });
