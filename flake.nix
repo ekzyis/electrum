@@ -6,7 +6,24 @@
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      # Vendored atheris (the coverage-guided fuzzer used by the fuzz tests) is
+      # not yet in nixpkgs, so expose it via python314Packages through an overlay.
+      # atheris needs clang + libFuzzer, hence the clangStdenv override.
+      atherisOverlay = final: prev: {
+        python314 = prev.python314.override {
+          packageOverrides = pyFinal: pyPrev: {
+            atheris = pyFinal.callPackage ./nix/atheris.nix {
+              stdenv = final.clangStdenv;
+            };
+          };
+        };
+      };
+
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs {
+        inherit system;
+        overlays = [ atherisOverlay ];
+      }));
     in
     {
       devShells = forAllSystems (pkgs:
@@ -21,7 +38,8 @@
             pycryptodomex
             pyaes
             pyqt6
-          ]);
+          # atheris (fuzz-test dependency) only builds on Linux.
+          ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ ps.atheris ]);
         in
         {
           default = pkgs.mkShell {
