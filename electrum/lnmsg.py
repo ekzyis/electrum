@@ -184,7 +184,12 @@ def _read_primitive_field(
             raise UnknownMsgFieldType(f"unknown field type: {field_type!r}")
         total_len = count * type_len
 
-    buf = fd.read(total_len)
+    try:
+        buf = fd.read(total_len)
+    except OverflowError:
+        # total_len too large to fit an index-sized integer; the stream cannot
+        # possibly hold that many bytes, so treat it as truncated.
+        raise UnexpectedEndOfStream()
     if total_len >= 0 and len(buf) != total_len:
         raise UnexpectedEndOfStream()
 

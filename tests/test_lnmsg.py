@@ -184,6 +184,18 @@ class TestLNMsg(ElectrumTestCase):
         with self.assertRaises(MsgInvalidFieldOrder):
             lnser.read_tlv_stream(fd=io.BytesIO(bfh("ffffffffffffffffff000000")), tlv_stream_name="n2")
 
+    def test_read_tlv_stream__oversized_length_is_not_overflow(self):
+        # regression: a TLV record whose length is an 8-byte bigsize larger than
+        # ssize_t made fd.read() raise OverflowError instead of the documented
+        # UnexpectedEndOfStream. Found by the tests/fuzz/fuzz_lnmsg.py harness.
+        lnser = LNSerializer()
+        # tlv_type=0x01, tlv_len=bigsize(2**64-1); no value bytes follow
+        with self.assertRaises(UnexpectedEndOfStream):
+            lnser.read_tlv_stream(fd=io.BytesIO(bfh("01ffffffffffffffffff")), tlv_stream_name="n1")
+        # same record reached via a full "init" message (gflen=0, flen=0, then the tlv)
+        with self.assertRaises(UnexpectedEndOfStream):
+            decode_msg(bfh("00100000000001ffffffffffffffffff"))
+
     def test_encode_decode_msg__missing_mandatory_field_gets_set_to_zeroes(self):
         # "channel_update": "signature" missing -> gets set to zeroes
         self.assertEqual(bfh("01020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000043497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea33090000000000d43100006f00025e6ed0830100009000000000000000c8000001f400000023000000003b9aca00"),
