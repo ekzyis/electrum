@@ -96,8 +96,10 @@ def encode_fallback_addr(fallback: str, net: Type[AbstractNet]) -> Sequence[int]
 
 
 def parse_fallback_addr(data5: Sequence[int], net: Type[AbstractNet]) -> Optional[str]:
+    if not data5:
+        return None
     wver = data5[0]
-    data8 = bytes(convertbits(data5[1:], 5, 8, False))
+    data8 = _tagged_bytes(data5[1:])
     if wver == 17:
         addr = hash160_to_b58_address(data8, net.ADDRTYPE_P2PKH)
     elif wver == 18:
@@ -146,14 +148,23 @@ def int_from_data5(data5: Sequence[int]) -> int:
 def pull_tagged(data5: bytearray) -> Tuple[str, Sequence[int]]:
     """Try to pull out tagged data: returns tag, tagged data. Mutates data in-place."""
     if len(data5) < 3:
-        raise ValueError("Truncated field")
+        raise BOLT11DecodeException("Truncated field")
     length = data5[1] * 32 + data5[2]
     if length > len(data5) - 3:
-        raise ValueError(
+        raise BOLT11DecodeException(
             "Truncated {} field: expected {} values".format(CHARSET[data5[0]], length))
     ret = (CHARSET[data5[0]], data5[3:3+length])
     del data5[:3 + length]    # much faster than: data5=data5[offset:]
     return ret
+
+
+def _tagged_bytes(tagdata: Sequence[int]) -> bytes:
+    """Convert 5-bit tag data to bytes, rejecting invalid bech32 padding.
+    convertbits returns None when the trailing bits don't zero-pad cleanly."""
+    data8 = convertbits(tagdata, 5, 8, False)
+    if data8 is None:
+        raise BOLT11DecodeException("invalid bech32 padding in tagged field")
+    return bytes(data8)
 
 
 def encode_bolt11_invoice(addr: 'BOLT11Addr', privkey) -> str:
@@ -516,13 +527,17 @@ def decode_bolt11_invoice(invoice: str, *, verbose=False, net=None) -> BOLT11Add
                 continue
 
         elif tag == 'd':
-            addr.tags.append(('d', bytes(convertbits(tagdata, 5, 8, False)).decode('utf-8')))
+            try:
+                description = _tagged_bytes(tagdata).decode('utf-8')
+            except UnicodeDecodeError as e:
+                raise BOLT11DecodeException(f"invalid utf-8 in 'd' field: {e}") from e
+            addr.tags.append(('d', description))
 
         elif tag == 'h':
             if data_length != 52:
                 addr.unknown_tags.append((tag, tagdata))
                 continue
-            addr.tags.append(('h', bytes(convertbits(tagdata, 5, 8, False))))
+            addr.tags.append(('h', _tagged_bytes(tagdata)))
 
         elif tag == 'x':
             addr.tags.append(('x', int_from_data5(tagdata)))
@@ -531,19 +546,19 @@ def decode_bolt11_invoice(invoice: str, *, verbose=False, net=None) -> BOLT11Add
             if data_length != 52:
                 addr.unknown_tags.append((tag, tagdata))
                 continue
-            addr.paymenthash = bytes(convertbits(tagdata, 5, 8, False))
+            addr.paymenthash = _tagged_bytes(tagdata)
 
         elif tag == 's':
             if data_length != 52:
                 addr.unknown_tags.append((tag, tagdata))
                 continue
-            addr.payment_secret = bytes(convertbits(tagdata, 5, 8, False))
+            addr.payment_secret = _tagged_bytes(tagdata)
 
         elif tag == 'n':
             if data_length != 53:
                 addr.unknown_tags.append((tag, tagdata))
                 continue
-            pubkeybytes = bytes(convertbits(tagdata, 5, 8, False))
+            pubkeybytes = _tagged_bytes(tagdata)
             addr.pubkey = pubkeybytes
 
         elif tag == 'c':
@@ -575,20 +590,24 @@ def decode_bolt11_invoice(invoice: str, *, verbose=False, net=None) -> BOLT11Add
     # field specified below).
     addr.signature = sigdecoded[:65]
     hrp_hash = sha256(hrp.encode("ascii") + bytes(convertbits(data5, 5, 8, True))).digest()
-    if addr.pubkey:  # Specified by `n`
-        # BOLT #11:
-        #
-        # A reader MUST use the `n` field to validate the signature instead of
-        # performing signature recovery if a valid `n` field is provided.
-        if not ecc.ECPubkey(addr.pubkey).ecdsa_verify(sigdecoded[:64], hrp_hash):
-            raise BOLT11DecodeException("bad signature")
-        pubkey_copy = addr.pubkey
+    try:
+        if addr.pubkey:  # Specified by `n`
+            # BOLT #11:
+            #
+            # A reader MUST use the `n` field to validate the signature instead of
+            # performing signature recovery if a valid `n` field is provided.
+            if not ecc.ECPubkey(addr.pubkey).ecdsa_verify(sigdecoded[:64], hrp_hash):
+                raise BOLT11DecodeException("bad signature")
+            pubkey_copy = addr.pubkey
 
-        class WrappedBytesKey:
-            serialize = lambda: pubkey_copy
+            class WrappedBytesKey:
+                serialize = lambda: pubkey_copy
 
-        addr.pubkey = WrappedBytesKey
-    else: # Recover pubkey from signature.
-        addr.pubkey = SerializableKey(ecc.ECPubkey.from_ecdsa_sig64(sigdecoded[:64], sigdecoded[64], hrp_hash))
+            addr.pubkey = WrappedBytesKey
+        else: # Recover pubkey from signature.
+            addr.pubkey = SerializableKey(ecc.ECPubkey.from_ecdsa_sig64(sigdecoded[:64], sigdecoded[64], hrp_hash))
+    except (ValueError, ecc.InvalidECPointException) as e:
+        # the `n` pubkey or the signature bytes are attacker-controlled garbage
+        raise BOLT11DecodeException(f"invalid signature or pubkey: {e}") from e
 
     return addr

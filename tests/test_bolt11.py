@@ -4,7 +4,7 @@ from binascii import unhexlify, hexlify
 import pprint
 import unittest
 
-from electrum.bolt11 import shorten_amount, unshorten_amount, BOLT11Addr, encode_bolt11_invoice, decode_bolt11_invoice
+from electrum.bolt11 import shorten_amount, unshorten_amount, BOLT11Addr, encode_bolt11_invoice, decode_bolt11_invoice, BOLT11InvoiceException
 from electrum.segwit_addr import bech32_encode, bech32_decode
 from electrum import segwit_addr
 from electrum.lnutil import UnknownEvenFeatureBits, LnFeatures, IncompatibleLightningFeatures
@@ -164,6 +164,26 @@ class TestBolt11(ElectrumTestCase):
         lnaddr = decode_bolt11_invoice("lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsdq5vdhkven9v5sxyetpdees9q5sqqqqqqqqqqqqqqqpqsqvvh7ut50r00p3pg34ea68k7zfw64f8yx9jcdk35lh5ft8qdr8g4r0xzsdcrmcy9hex8un8d8yraewvhqc9l0sh8l0e0yvmtxde2z0hgpzsje5l")
         self.assertEqual((1 << 9) + (1 << 15) + (1 << 99), lnaddr.get_tag('9'))
         self.assertEqual(b"\x11" * 32, lnaddr.payment_secret)
+
+    def test_decode_malformed_invoice_raises_bolt11_exception(self):
+        # regression: these fuzzer-found invoices (tests/fuzz/fuzz_bolt11.py) each
+        # leaked an undocumented exception (ValueError from pull_tagged / ecc
+        # signature recovery, TypeError from convertbits() returning None,
+        # IndexError from an empty `f` fallback). decode_bolt11_invoice only
+        # documents BOLT11InvoiceException / IncompatibleOrInsaneFeatures.
+        malformed = [
+            # truncated tagged field -> pull_tagged
+            "lnbc1d3hxycejx5crqaf3wpmx5mr4v4a8qup4w9chzumew93hjuf4wfchwuth0fckvutewpckguf40puhx7rcv968x7tsxd4nwetw0pmrg6nn0pch5ur4v9a8gunwwahxw7nwqqqqqqpnddj85ae49pukgmr6vccrxutyvakny6rywyerwcm3wcehgengwymnwaend3engetkwvekx6pe0fmnjdm2xg6k2mt4y36hqufkxdh8jv34v4kh2v3hd3hxy6pjwfehqlvk7wx",
+            # signature recovery on garbage -> electrum_ecc
+            "lnbc8751ja3nydfsxp3nydwwjkrg7vyfxzfc4xnn0fkxa3kxcmrvd3kxcmrvd3kxk2et9v4jk2et9v4jk2et9v4jk2et9v4jkf3xxv34wpcr2ut3wy8lpj3f",
+            # convertbits() returns None (bad padding) -> bytes(None)
+            "lnbc000000001qqqqqqpfqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8wqqqqqqqqqqqqqqqqqqqqq4qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqrvde3xxvnvxvexwctdv9mks734wdjnjvq7xz4ek",
+            # empty `f` fallback field -> parse_fallback_addr data5[0]
+            "lnbc19v8q6zsrqqqqqzzqwgvrmrggvl3sqqqqqqqqqqqqqqqqqqqzqqqqqqqqqqq0x9sqqqqgqqz7q9fqzjgqfqqhgqslqpfqxaqr2gpzxqpfqn5szqqqqq5srks2g9h8j6t02pex77refc5srks92pex77re9yzd5pjlwpex77rewgpsqqqqwgzqqqqqmgr47hmpd3k97hafqresqqqqqrd2qtm5d4cz7cmvv96kgefdxycrqvf0945x7mt9943kcct4v3jj6etvv43hgun4d5hnzvfh8ymkvcfe95cxvd3c956xvc3c94snwcee95mxzcfk8yekxv34vd3nstmnvdexzarrdpcxzep0vea8vetwwchkc6tz9ac8jargdahrxt33xshhx6t5v5khqctrddskwetn9ac8jargdah97um0vd4hxtmpwdukuc6l9asku7tfduh47hmfde5hgh6l9ec8nksg83kk7er4d3jnuus2qqqqqqgqqqq8xrgqqqq0qqcpqyqa6qp8uq9pfqs8wgyqqqqgz2x7p",
+        ]
+        for inv in malformed:
+            with self.assertRaises(BOLT11InvoiceException):
+                decode_bolt11_invoice(inv, net=constants.net)
 
     def test_validate_and_compare_features(self):
         lnaddr = decode_bolt11_invoice("lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsdq5vdhkven9v5sxyetpdees9q5sqqqqqqqqqqqqqqqpqsqvvh7ut50r00p3pg34ea68k7zfw64f8yx9jcdk35lh5ft8qdr8g4r0xzsdcrmcy9hex8un8d8yraewvhqc9l0sh8l0e0yvmtxde2z0hgpzsje5l")
