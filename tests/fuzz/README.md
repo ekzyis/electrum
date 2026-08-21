@@ -7,19 +7,19 @@ coverage-guided, native python fuzzer by Google.
 
 ```
 tests/fuzz/
-  _harness.py     plumbing shared by all harnesses
-  fuzz_tx.py      harness for transactions
-  fuzz_lnmsg.py   harness for lightning wire messages
-  fuzz_bolt11.py  harness for lightning payment requests
-  gen_corpus.py   writes initial corpus to ramp up coverage
-  corpus/         minimized corpus for maximum coverage and regression testing
-  crashes/        crash inputs are saved here
+  _harness.py          plumbing shared by all harnesses
+  fuzz_tx.py           harness for transactions
+  fuzz_lnmsg.py        harness for lightning wire messages
+  fuzz_bolt11.py       harness for lightning payment requests
+  fuzz_tx_diff.py      differential: tx parsing vs. embit (txid oracle)
+  fuzz_bip32_diff.py   differential: BIP32 xkey parsing vs. embit
+  fuzz_bip32_derive_diff.py differential: BIP32 child derivation (CKD) vs. embit
+  fuzz_address_diff.py differential: address_to_script vs. embit
+  fuzz_merkle_diff.py  SPV merkle-proof verifier (completeness + soundness)
+  gen_corpus.py        writes initial corpus to ramp up coverage
+  corpus/              minimized corpus for maximum coverage and regression testing
+  crashes/             crash inputs are saved here
 ```
-
-Each harness defines `TestOneInput(data)` and passes a **tight allow-list** of
-the parser's expected exceptions to `_harness.run()`. The wrapper swallows
-exactly those; anything else reaching the top is a finding. Keep the allow-lists
-narrow (e.g. only `SerializationError` for tx) to not hide bugs.
 
 ## Setup
 

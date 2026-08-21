@@ -24,9 +24,10 @@ except ImportError:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def instrument_imports():
+def instrument_imports(extra=()):
     """Instrument electrum for coverage (no-op without Atheris)."""
-    return atheris.instrument_imports(include=["electrum"]) if atheris else nullcontext()
+    include = ["electrum", *extra]
+    return atheris.instrument_imports(include=include) if atheris else nullcontext()
 
 
 def corpus_dir(name):
