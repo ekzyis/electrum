@@ -228,6 +228,27 @@ class TestInvalidPSBT(ElectrumTestCase):
         with self.assertRaises(SerializationError):
             tx2 = tx_from_any('cHNidP8BAHMCAAAAATAa6YblFqHsisW0vGVz0y+DtGXiOtdhZ9aLOOcwtNvbAAAAAAD/////AnR7AQAAAAAAF6kUA6oXrogrXQ1Usl1jEE5P/s57nqKHYEOZOwAAAAAXqRS5IbG6b3IuS/qDtlV6MTmYakLsg4cAAAAAAAEBHwDKmjsAAAAAFgAU0tlLZK4IWH7vyO6xh8YB6Tn5A3wAAQAWABRi6emC//NN2COWEDFrCQzSo7dHywABACIAIIdrrYMvHRaAFe1BIyqeploYFdnvE8Dvh1n2S1srJ4plIQEAJVEhA7fOI6AcW0vwCmQlN836uzFbZoMyhnR471EwnSvVf4qHUa4A')
 
+    def test_invalid_psbt_019(self):
+        # Case: empty PSBT
+        for empty in ("", b"", "   ", "\n\t"):
+            with self.assertRaises(SerializationError):
+                tx_from_any(empty)
+
+    def test_invalid_psbt_020(self):
+        # Case: PSBT with truncated compact-size encoding
+        with self.assertRaises(SerializationError):
+            tx_from_any(bytes.fromhex('70736274ff74ff'))
+
+    def test_invalid_psbt_021(self):
+        # Case: PSBT with OverflowError when reading compact-size length encoding
+        with self.assertRaises(SerializationError):
+            tx_from_any(bytes.fromhex('70736274ffffffffffffffffffff'))
+
+    def test_invalid_psbt_22(self):
+        # Case: PSBT with PSBT_GLOBAL_UNSIGNED_TX key and an empty value
+        with self.assertRaises(SerializationError):
+            tx_from_any(bytes.fromhex('70736274ff01000000017074'))
+
     def test_invalid_psbt__input_with_both_witness_utxo_and_nonwitness_utxo_that_are_inconsistent(self):
         # Case: PSBT where an input has both WITNESS_UTXO and UTXO but which are inconsistent.
         with self.assertRaises(PSBTInputConsistencyFailure):

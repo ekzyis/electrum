@@ -1542,7 +1542,11 @@ def tx_from_any(
         #       consider:  "\n".encode().hex() == "0a"
         #       For str, this is a non-issue and safe to do.
         raw = re.sub(r'\s', '', raw)
-    raw = convert_raw_tx_to_hex(raw)
+    try:
+        raw = convert_raw_tx_to_hex(raw)
+    except ValueError as e:
+        # e.g. empty input, or unrecognised encoding
+        raise SerializationError(str(e)) from e
     try:
         return PartialTransaction.from_raw_psbt(raw)
     except BadHeaderMagic:
@@ -1595,12 +1599,15 @@ def deser_compact_size(f) -> Optional[int]:
     except IndexError:
         return None     # end of file
 
-    if nit == 253:
-        nit = struct.unpack("<H", f.read(2))[0]
-    elif nit == 254:
-        nit = struct.unpack("<I", f.read(4))[0]
-    elif nit == 255:
-        nit = struct.unpack("<Q", f.read(8))[0]
+    try:
+        if nit == 253:
+            nit = struct.unpack("<H", f.read(2))[0]
+        elif nit == 254:
+            nit = struct.unpack("<I", f.read(4))[0]
+        elif nit == 255:
+            nit = struct.unpack("<Q", f.read(8))[0]
+    except struct.error:
+        return None     # truncated length prefix; treat as end of file
     return nit
 
 
@@ -1624,12 +1631,20 @@ class PSBTSection:
         if key_size is None:
             raise UnexpectedEndOfStream()
 
-        full_key = fd.read(key_size)
+        try:
+            full_key = fd.read(key_size)
+        except OverflowError:
+            # key_size too large to fit an index-sized integer; the stream
+            # cannot hold that many bytes, so treat it as truncated.
+            raise UnexpectedEndOfStream()
         key_type, key = cls.get_keytype_and_key_from_fullkey(full_key)
 
         val_size = deser_compact_size(fd)
         if val_size is None: raise UnexpectedEndOfStream()
-        val = fd.read(val_size)
+        try:
+            val = fd.read(val_size)
+        except OverflowError:
+            raise UnexpectedEndOfStream()
 
         return key_type, key, val
 
@@ -2264,6 +2279,8 @@ class PartialTransaction(Transaction):
                         raise SerializationError(f"duplicate key: {repr(kt)}")
                     if key:
                         raise SerializationError(f"key for {repr(kt)} must be empty")
+                    if not val:
+                        raise SerializationError(f"value for {repr(kt)} must be a non-empty transaction")
                     unsigned_tx = Transaction(val.hex())
                     for txin in unsigned_tx.inputs():
                         if txin.script_sig or txin.witness:
