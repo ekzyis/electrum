@@ -44,6 +44,29 @@ Atheris is based on libFuzzer, so you can also use flags to control runs like
 `-runs=N` and `-max_total_time=SECONDS`, or `-merge=1 <dst> <src>` to minimize a
 corpus.
 
+## Corpus coverage
+
+You can use `coverage.py` to replay a corpus and see which lines are covered.
+
+To see which lines of a parser the accumulated corpus actually reaches, replay
+the corpus under `coverage.py`. This needs Atheris **absent** — with it
+installed its instrumentation both hijacks the run into a fuzzing loop and stops
+coverage's tracer from recording (you get "No data to report"). So do this in a
+plain venv without atheris:
+
+```bash
+pip install coverage
+coverage run \
+    --include='*/electrum/<module>.py' \
+    tests/fuzz/fuzz_<harness>.py
+coverage report
+```
+
+Swap the harness and its `--include` target module per parser (e.g.
+`electrum/bolt11.py` for `fuzz_bolt11.py`). The percentage is over the whole
+module (which includes code unreachable from the parser), so read it as a
+relative/regression signal, not an absolute parser-coverage number.
+
 ## Reproduce
 
 ```bash

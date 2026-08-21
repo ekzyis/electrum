@@ -73,7 +73,7 @@ def FuzzedDataProvider(data):
     return atheris.FuzzedDataProvider(data) if atheris else _FDP(data)
 
 
-def run(TestOneInput, *, allowed, corpus_dir=None, fallback_rounds=200_000):
+def run(TestOneInput, *, allowed, corpus_dir=None):
     """Run TestOneInput as a fuzz target."""
     cdir = crashes_dir(_harness_name())
     if atheris:
@@ -83,8 +83,17 @@ def run(TestOneInput, *, allowed, corpus_dir=None, fallback_rounds=200_000):
         atheris.Setup(argv, _guard(TestOneInput, allowed))
         atheris.Fuzz()
     else:
-        rounds = int(os.environ.get("ELECTRUM_FUZZ_ROUNDS", fallback_rounds))
-        _fallback_run(TestOneInput, allowed, corpus_dir, cdir, rounds)
+        _fallback_run(TestOneInput, allowed, corpus_dir, cdir, _fallback_rounds())
+
+
+def _fallback_rounds():
+    """How many dumb-mutation rounds to run after replaying the corpus."""
+    if os.environ.get("COVERAGE_RUN"):
+        return 0
+    env = os.environ.get("ELECTRUM_FUZZ_ROUNDS")
+    if env is not None:
+        return int(env)
+    return 200_000
 
 
 def _guard(TestOneInput, allowed):

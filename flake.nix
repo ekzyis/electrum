@@ -7,9 +7,7 @@
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
-      # Vendored atheris (the coverage-guided fuzzer used by the fuzz tests) is
-      # not yet in nixpkgs, so expose it via python314Packages through an overlay.
-      # atheris needs clang + libFuzzer, hence the clangStdenv override.
+      # Vendored atheris (not yet in nixpkgs) needs clang + libFuzzer.
       atherisOverlay = final: prev: {
         python314 = prev.python314.override {
           packageOverrides = pyFinal: pyPrev: {
@@ -24,9 +22,10 @@
         inherit system;
         overlays = [ atherisOverlay ];
       }));
-    in
-    {
-      devShells = forAllSystems (pkgs:
+
+      # coverage.py cannot trace while atheris is importable, so the coverage
+      # shell omits it and uses a separate venv (a shared venv would leak it).
+      mkDevShell = pkgs: { withAtheris, venvDir }:
         let
           python = pkgs.python314;
 
@@ -38,46 +37,53 @@
             pycryptodomex
             pyaes
             pyqt6
-          # atheris (fuzz-test dependency) only builds on Linux.
-          ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ ps.atheris ]);
+            coverage
+          ] ++ pkgs.lib.optionals (withAtheris && pkgs.stdenv.hostPlatform.isLinux) [ ps.atheris ]);
         in
-        {
-          default = pkgs.mkShell {
-            packages = [
-              pyEnv
-              # Toolchain to compile libsecp256k1 for the electrum_ecc wheel.
-              pkgs.gcc
-              pkgs.gnumake
-              pkgs.autoconf
-              pkgs.automake
-              pkgs.libtool
-              pkgs.pkg-config
-            ];
+        pkgs.mkShell {
+          packages = [
+            pyEnv
+            pkgs.gcc
+            pkgs.gnumake
+            pkgs.autoconf
+            pkgs.automake
+            pkgs.libtool
+            pkgs.pkg-config
+          ];
 
-            shellHook = ''
-              # A venv layered on top of the nix python: `pip install -e .` installs
-              # Electrum (editable) + its pure-python deps in here, while pytest /
-              # PyQt6 / cryptography are inherited from nixpkgs via site-packages.
-              if [ ! -e .venv/bin/python ]; then
-                echo "flake: creating .venv (system-site-packages) with ${python.name}"
-                ${pyEnv}/bin/python -m venv --system-site-packages .venv
+          shellHook = ''
+            if [ ! -e ${venvDir}/bin/python ]; then
+              echo "flake: creating ${venvDir} (system-site-packages) with ${python.name}"
+              ${pyEnv}/bin/python -m venv --system-site-packages ${venvDir}
+            fi
+            source ${venvDir}/bin/activate
+
+            # Shims so bare `pytest` / `coverage` use THIS venv's python (which
+            # sees the editable electrum install), not nix env entry points.
+            for tool in pytest coverage; do
+              if [ ! -e ${venvDir}/bin/$tool ]; then
+                printf '#!/usr/bin/env bash\nexec "$(dirname "$0")/python" -m '"$tool"' "$@"\n' > ${venvDir}/bin/$tool
+                chmod +x ${venvDir}/bin/$tool
               fi
-              source .venv/bin/activate
+            done
 
-              # Make bare `pytest` use THIS venv's python (which sees the editable
-              # electrum install), rather than the nix env's pytest entry point.
-              if [ ! -e .venv/bin/pytest ]; then
-                printf '#!/usr/bin/env bash\nexec "$(dirname "$0")/python" -m pytest "$@"\n' > .venv/bin/pytest
-                chmod +x .venv/bin/pytest
-              fi
+            pip install -e .
 
-              pip install -e .
-
-              echo "Electrum dev shell ready."
-              echo "  Tests: pytest tests/ [-k <expr>]"
-              echo "  Fuzz:  python tests/fuzz/fuzz_<harness>.py <corpus>"
-            '';
-          };
-        });
+            echo "Electrum dev shell ready."
+            echo "  Tests: pytest tests/ [-k <expr>]"
+          '' + (if withAtheris then ''
+            echo "  Fuzz:  python tests/fuzz/fuzz_<harness>.py <corpus>"
+          '' else ''
+            echo "  Coverage (atheris-free shell):"
+            echo "    coverage run --include='*/electrum/<module>.py' tests/fuzz/fuzz_<harness>.py"
+            echo "    coverage report"
+          '');
+        };
+    in
+    {
+      devShells = forAllSystems (pkgs: {
+        default = mkDevShell pkgs { withAtheris = true; venvDir = ".venv"; };
+        coverage = mkDevShell pkgs { withAtheris = false; venvDir = ".venv-coverage"; };
+      });
     };
 }
